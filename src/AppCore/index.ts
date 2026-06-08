@@ -169,8 +169,13 @@ export class DiscordBotClient extends EventEmitter {
         const enabledFeatures = new Set(app.commandLine.getSwitchValue("enable-features").split(","));
         const disabledFeatures = new Set(app.commandLine.getSwitchValue("disable-features").split(","));
         // Allow Localhost SSL
+        // NOTE: We intentionally do NOT use the global "ignore-certificate-errors" switch here.
+        // That switch disables TLS validation for the entire Chromium instance (CDN, updates,
+        // themes, every HTTPS request the app makes), which would let a network MITM tamper with
+        // any traffic undetected. Instead, the self-signed certificate served by the local proxy
+        // is trusted in a scoped way via session.setCertificateVerifyProc() (see createSession()),
+        // so only the mapped Discord domain pointing at 127.0.0.1 bypasses validation.
         app.commandLine.appendSwitch("allow-insecure-localhost", "true");
-        app.commandLine.appendSwitch("ignore-certificate-errors");
         app.commandLine.appendSwitch("host-rules", `MAP ${Constants.CustomDiscordDomain} 127.0.0.1:${this.port}`);
         // Vesktop
         // Disable renderer backgrounding to prevent the app from unloading when in the background
@@ -244,6 +249,19 @@ export class DiscordBotClient extends EventEmitter {
             app.whenReady().then(async () => {
                 this.logger.info("Creating session...");
                 this.customSession = session.fromPartition("persist:elysia_dbc");
+                // Scoped TLS bypass: only trust the local self-signed proxy.
+                // `discord.com` is force-mapped to 127.0.0.1 by the host-rules switch above, so any
+                // certificate error for that host comes from our own local server and is safe to
+                // accept. Every other host (CDN, GitHub updates/themes, etc.) keeps Chromium's
+                // default certificate validation, unlike the old global ignore-certificate-errors.
+                this.customSession.setCertificateVerifyProc((request, callback) => {
+                    if (request.hostname === Constants.CustomDiscordDomain) {
+                        // 0 = trust this certificate
+                        return callback(0);
+                    }
+                    // -3 = use Chromium's default verification result
+                    callback(-3);
+                });
                 // Enable DoH (Cloudflare)
                 app.configureHostResolver({
                     enableBuiltInResolver: true,

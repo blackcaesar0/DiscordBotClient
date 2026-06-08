@@ -10,6 +10,8 @@
     - [Building from source](#building-from-source)
 - [Login](#login)
 - [Features](#features)
+- [Security](SECURITY.md)
+- [Architecture (for contributors)](docs/Architecture.md)
 - [Version](#version)
 - [Troubleshooting](#troubleshooting)
 - [FAQ](#faq)
@@ -30,6 +32,12 @@ support bot accounts and be aimed at power-users.
 The application only uses the official Discord API and doesn't send data to
 third parties. However, this application is not an official product by
 Discord Inc.
+
+> [!IMPORTANT]
+> Before using this with a real bot, read the **[Security Model & Policy](SECURITY.md)**
+> — it explains exactly how your bot token is handled, the residual risks, and
+> why using a bot token in a client like this is against the Discord ToS.
+> Contributors should also see the **[Architecture overview](docs/Architecture.md)**.
 
 ![Demo Screenshot](https://i.imgur.com/LRj25W2.png)
 
