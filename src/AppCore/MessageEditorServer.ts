@@ -26,7 +26,9 @@ app.use(express.static(Constants.EditorHTMLFolderPath));
 
 export default async function startEditor (): Promise<number> {
     return new Promise((resolve, reject) => {
-        const server = app.listen(0, () => {
+        // Bind to loopback only (was 0.0.0.0). This server is only ever loaded by the app
+        // itself via http://localhost:<port>, so it must not be reachable from the LAN.
+        const server = app.listen(0, "127.0.0.1", () => {
             const { port } = server.address() as AddressInfo;
             resolve(port);
             logger.log(`API Server listening on http://localhost:${port}`);

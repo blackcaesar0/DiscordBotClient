@@ -88,7 +88,11 @@ export default async function startAppServer (): Promise<number> {
             resolve(address.port);
             logger.log(`API Server listening on https://localhost:${address.port}`);
         };
-        server.listen(0).once("listening", callback);
+        // Bind to the loopback interface only. The previous `listen(0)` bound to 0.0.0.0,
+        // exposing the Discord API proxy (with the app's session cookies) to the whole LAN.
+        // The app reaches this server via 127.0.0.1 (host-rules maps discord.com -> 127.0.0.1),
+        // so loopback-only binding is fully sufficient.
+        server.listen(0, "127.0.0.1").once("listening", callback);
         server.on("error", reject);
     });
 }
