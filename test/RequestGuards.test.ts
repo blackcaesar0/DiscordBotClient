@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import {
     buildUpstreamUrl,
     isBlacklistedRoute,
+    isJsonContentType,
     normalizeRequestPath,
     redactSensitiveUrl,
     UpstreamOrigin,
@@ -112,5 +113,20 @@ describe("redactSensitiveUrl", () => {
     it("leaves ordinary targets untouched", () => {
         assert.equal(redactSensitiveUrl("/api/v9/users/@me"), "/api/v9/users/@me");
         assert.equal(redactSensitiveUrl(""), "");
+    });
+});
+
+describe("isJsonContentType", () => {
+    it("accepts the JSON media type with parameters", () => {
+        assert.equal(isJsonContentType("application/json"), true);
+        assert.equal(isJsonContentType("application/json; charset=utf-8"), true);
+        assert.equal(isJsonContentType("Application/JSON"), true);
+        assert.equal(isJsonContentType(" application/json "), true);
+    });
+
+    it("rejects other media types", () => {
+        assert.equal(isJsonContentType("multipart/form-data; boundary=x"), false);
+        assert.equal(isJsonContentType("text/plain"), false);
+        assert.equal(isJsonContentType(undefined), false);
     });
 });

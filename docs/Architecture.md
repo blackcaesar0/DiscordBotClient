@@ -48,9 +48,11 @@ through a **local proxy** that:
 
 | File | Responsibility |
 |------|----------------|
-| `Utils.ts` | The proxy implementation (`Util.proxy`), self-signed cert generation, token→ID decoding, profile patching, request body parsing. |
-| `RequestGuards.ts` | Pure (Electron-free, unit-tested) request helpers: path normalization, route blacklisting, upstream URL validation, log redaction. |
+| `Utils.ts` | The proxy implementation (`Util.proxy`), self-signed cert generation, profile patching, request body parsing. Token/version helpers here delegate to the pure modules below. |
+| `RequestGuards.ts` | Pure (Electron-free, unit-tested) request helpers: path normalization, route blacklisting, upstream URL validation, log redaction, content-type sniffing. |
 | `RequestLogger.ts` | The `morgan` middleware shared by both local servers (opt-in via `verbose_logging`, with URL redaction). |
+| `TokenUtils.ts` | Pure token helpers: `Bot`/`Bearer` prefix stripping and token→ID decoding. |
+| `Version.ts` | Pure version comparison (`v` prefix, prereleases and build metadata tolerated; never throws). |
 | `RegisterRoutes.ts` | Walks the `routes/` tree and registers each file as an Express handler. |
 | `Experiments.ts` | Builds the user/guild/apex experiment payloads from bundled snapshots. |
 | `DiscordBitField/` | Typed bitfield helpers (intents, user flags, application flags). |
@@ -113,12 +115,14 @@ DevTools open automatically when the app is **not** packaged.
 
 User configuration lives in `config.ini` under Electron's `userData` directory
 and is editable from the tray menu → **Settings (Config Editor)**. Keys are
-documented inline (with Monaco autocomplete) in `Config.ts`:
+documented inline (with Monaco autocomplete) in `Config.ts`. An invalid file no
+longer prevents startup: the app logs the problem, falls back to the defaults and
+leaves the file untouched so it can be fixed from the editor.
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `cache_assets` | boolean | `false` | Cache `discord.com/assets` to disk (faster on slow networks; not auto-cleaned). |
-| `guilds_per_shard` | number | `100` | Used to compute the number of shards. |
+| `guilds_per_shard` | number | `100` | Used to compute the number of shards. Must be a whole number in `1..2500` (Discord's per-shard ceiling). |
 | `suppress_intent_warning` | boolean | `false` | Skip the MESSAGE_CONTENT intent warning at login. |
 | `generate_fake_profile` | boolean | `true` | Inject cosmetic fake profile/Nitro data. |
 | `verbose_logging` | boolean | `false` | Log every request handled by the local servers (URLs are redacted; takes effect without a restart). |
@@ -126,9 +130,14 @@ documented inline (with Monaco autocomplete) in `Config.ts`:
 ## Tests
 
 `test/` holds `node:test` suites executed with `npm run test:unit` (and run in CI
-by `.github/workflows/lint.yml`). They cover `src/AppUtils/RequestGuards.ts`:
-path normalization, deny-list matching (including encoding/traversal bypasses),
-upstream-origin validation and log redaction.
+by `.github/workflows/lint.yml`):
 
-Keep security-relevant decisions in Electron-free modules like that one — it is
-what makes them testable without booting Electron.
+- `RequestGuards.test.ts` — path normalization, deny-list matching (including
+  encoding/traversal bypasses), upstream-origin validation, log redaction and
+  JSON content-type detection.
+- `TokenUtils.test.ts` — prefix stripping (a token whose payload contains `Bot`
+  must survive it) and token→ID decoding.
+- `Version.test.ts` — release/prerelease ordering and malformed input.
+
+Keep security-relevant and otherwise fiddly logic in Electron-free modules like
+these — it is what makes them testable without booting Electron.

@@ -1,5 +1,6 @@
 /* Copyright Elysia © 2025. All rights reserved */
 
+import { app as electronApp } from "electron";
 import { scope } from "electron-log";
 import express from "express";
 import { readFileSync } from "fs";
@@ -49,6 +50,21 @@ app.all("*", function (req, res, next) {
     next();
 });
 
+let cachedDiscordHTML: string | null = null;
+
+/**
+ * Read the bundled Discord HTML snapshot.
+ *
+ * Cached in packaged builds: this runs on every navigation and `readFileSync` blocks the Electron
+ * main thread. In development the file is re-read each time so a regenerated snapshot
+ * (`npm run core:update`) is picked up without restarting the app.
+ */
+function readDiscordHTML (): string {
+    if (!electronApp.isPackaged) return readFileSync(Constants.DiscordHTMLPath, "utf8");
+    cachedDiscordHTML ??= readFileSync(Constants.DiscordHTMLPath, "utf8");
+    return cachedDiscordHTML;
+}
+
 registerRoutesSync(app, path.resolve(__dirname, "routes"), ["/api/v10", "/api/v9", "/api"]);
 
 app.all("/developers/*", (req, res) => {
@@ -71,7 +87,15 @@ app.use((req, res, next) => {
     // Main page
     if (["/", "/app", "/login"].includes(req.path) || ["/channels/"].some(s => req.path.startsWith(s))) {
         logger.log("Serving Discord HTML for route:", req.path);
-        return res.send(readFileSync(Constants.DiscordHTMLPath, "utf8"));
+        try {
+            return res.send(readDiscordHTML());
+        } catch (err) {
+            logger.error(`Cannot read the Discord snapshot at ${Constants.DiscordHTMLPath}:`, err);
+            return res.status(500).send({
+                message: `APIServer: Discord snapshot missing at ${Constants.DiscordHTMLPath}. Run "npm run core:update" to generate it.`,
+                code: 0,
+            });
+        }
     }
     // Other routes
     req.headers = req.originalHeaders;

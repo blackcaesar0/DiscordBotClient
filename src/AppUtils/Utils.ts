@@ -9,8 +9,10 @@ import GlobalConfig from "src/AppCore/Config";
 import Constants from "src/AppCore/Constants";
 
 import { UserFlagsBitField } from "./DiscordBitField";
-import { buildUpstreamUrl } from "./RequestGuards";
+import { buildUpstreamUrl, isJsonContentType } from "./RequestGuards";
+import { getIDFromToken } from "./TokenUtils";
 import { BadgesBasedUserDataAndExtends as UserBadges } from "./UserBadges";
+import { isNewerVersion } from "./Version";
 
 export default class Util {
     static ProfilePatch (
@@ -98,19 +100,12 @@ export default class Util {
             },
         };
     }
-    static getIDFromToken (token = ""): string | null {
-        if (!token) return null;
-        token = token.replace(/^(Bot|Bearer)\s*/i, "");
-        const parts = token.split(".");
-        if (parts.length < 2) return null; // Token must have at least 2 parts (id.secret)
-        try {
-            const decoded = Buffer.from(parts[0], "base64").toString();
-            // Discord user/bot IDs are numeric (snowflakes)
-            if (!decoded || !/^\d+$/.test(decoded)) return null;
-            return decoded;
-        } catch {
-            return null;
-        }
+    /**
+     * Decode the account ID a Discord token belongs to.
+     * @see {@link getIDFromToken} in `TokenUtils.ts` for the (unit tested) implementation.
+     */
+    static getIDFromToken (token: unknown = ""): string | null {
+        return getIDFromToken(token);
     }
 
     static getDataFromRequest (
@@ -120,8 +115,8 @@ export default class Util {
         callback: (rq: express.Request<any, any, any, any>, rs: express.Response) => unknown,
     ) {
         let data = "";
-        // check content-type
-        if (req.headers["content-type"] !== "application/json") {
+        // Media type only: `application/json; charset=utf-8` is still JSON.
+        if (!isJsonContentType(req.headers["content-type"])) {
             return multer().any()(req, res, function (err) {
                 if (err) {
                     console.error("Multer Error:", err);
@@ -169,31 +164,16 @@ export default class Util {
     }
     /**
      * Compares two version strings and determines if `versionB` is newer than `versionA`.
-     * Supports version strings in the format `major.minor.patch` with an optional prefix 'v'.
+     * Tolerates a `v` prefix, prerelease suffixes (nightly builds) and build metadata, and returns
+     * `false` instead of throwing on an unparseable version.
      *
      * @param versionA - The current version (e.g., "v1.2.3" or "1.2.3").
      * @param versionB - The new version to check (e.g., "v1.3.0" or "1.3.0").
      * @returns `true` if `versionB` is newer than `versionA`, otherwise `false`.
+     * @see {@link isNewerVersion} in `Version.ts` for the (unit tested) implementation.
      */
-    static isNewerVersion (versionA: string, versionB: string) {
-        const normalizeVersion = (version: string) => version.replace(/^v/, "");
-
-        const parseVersion = (version: string) => {
-            const parts = version.split(".").map(Number);
-            if (parts.length !== 3 || parts.some(isNaN)) {
-                throw new Error(`Invalid version format: ${version}`);
-            }
-            return parts;
-        };
-
-        const [vA, vB] = [normalizeVersion(versionA), normalizeVersion(versionB)].map(parseVersion);
-
-        for (let i = 0; i < 3; i++) {
-            if (vB[i] > vA[i]) return true;
-            if (vB[i] < vA[i]) return false;
-        }
-
-        return false;
+    static isNewerVersion (versionA: unknown, versionB: unknown) {
+        return isNewerVersion(versionA, versionB);
     }
     static async proxy (req: express.Request, res: express.Response) {
         if (!net.isOnline()) {

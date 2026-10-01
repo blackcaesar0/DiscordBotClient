@@ -4,6 +4,7 @@ import { APIApplication, ApplicationFlags, GatewayIntentBits } from "discord-api
 import { app, BrowserWindow, dialog } from "electron";
 import { ApplicationFlagsBitField, IntentsBitField } from "src/AppUtils/DiscordBitField";
 import { ApexExperiment, GuildExperiment, UserExperiment } from "src/AppUtils/Experiments";
+import { stripTokenPrefix } from "src/AppUtils/TokenUtils";
 
 import { DiscordBotClient } from ".";
 import Constants from "./Constants";
@@ -46,7 +47,12 @@ export function setupIPCEvents(mainApp: DiscordBotClient) {
             win?.close();
         });
     mainApp.ipcMain.handle(IPCEvent.GetBotInfo, (event, token) => {
-        token = token.replace(/Bot/g, "").trim();
+        // Strip only the `Bot `/`Bearer ` prefix. The previous `replace(/Bot/g, "")` removed every
+        // occurrence, corrupting any token whose base64 payload happens to contain "Bot".
+        token = stripTokenPrefix(token);
+        if (!token) {
+            return { success: false, message: "No token provided." };
+        }
         return mainApp.session
             .fetch("https://canary.discord.com/api/v9/applications/@me?with_counts=true", {
                 headers: {

@@ -165,3 +165,16 @@ export function redactSensitiveUrl (originalUrl: string): string {
     if (fragment.length) redacted += `#${fragment.join("#")}`;
     return redacted;
 }
+
+/**
+ * Whether a request body should be parsed as JSON.
+ *
+ * Compares only the media type: a comparison against the whole header value misses
+ * `application/json; charset=utf-8`, and the body would then be handed to the multipart parser.
+ *
+ * @param contentType Raw `Content-Type` header value.
+ */
+export function isJsonContentType (contentType: string | undefined): boolean {
+    if (!contentType) return false;
+    return contentType.split(";")[0].trim().toLowerCase() === "application/json";
+}
