@@ -82,11 +82,14 @@ through a **local proxy** that:
      past a check that the upstream API would still route to the blocked endpoint.
    - `/`, `/app`, `/login`, `/channels/*` serve the bundled Discord HTML.
    - Everything else is forwarded to `canary.discord.com` by `Util.proxy`.
-4. `Util.proxy` resolves the target with `RequestGuards.buildUpstreamUrl` (a
+4. Request bodies go through `Util.getDataFromRequest` (JSON, or multer for
+   multipart). A route callback that throws or rejects is reported as a JSON
+   error instead of becoming an unhandled error in the main process.
+5. `Util.proxy` resolves the target with `RequestGuards.buildUpstreamUrl` (a
    target that would resolve to any other origin is rejected with `400`), then
    uses Electron's `net.request` (session-aware), copies safe headers, forces the
    correct `Origin`/`Referer`, and streams the response back to the web client.
-5. Anything thrown while handling a request lands in the Express error handler,
+6. Anything thrown while handling a request lands in the Express error handler,
    which answers with a Discord-shaped JSON body instead of an HTML stack trace.
 
 ## Local development
@@ -138,6 +141,8 @@ by `.github/workflows/lint.yml`):
 - `TokenUtils.test.ts` — prefix stripping (a token whose payload contains `Bot`
   must survive it) and token→ID decoding.
 - `Version.test.ts` — release/prerelease ordering and malformed input.
+- `RegisterRoutes.test.ts` — route discovery: recursion, ordering (`#param`
+  directories last), and the skipping of declaration/non-script/hidden entries.
 
 Keep security-relevant and otherwise fiddly logic in Electron-free modules like
 these — it is what makes them testable without booting Electron.

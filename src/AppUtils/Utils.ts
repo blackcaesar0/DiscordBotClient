@@ -14,6 +14,22 @@ import { getIDFromToken } from "./TokenUtils";
 import { BadgesBasedUserDataAndExtends as UserBadges } from "./UserBadges";
 import { isNewerVersion } from "./Version";
 
+/**
+ * Log a failed route callback and answer with a Discord-shaped error body.
+ *
+ * Callbacks passed to {@link Util.getDataFromRequest} run from a stream/multer callback, i.e.
+ * outside the call stack Express can catch, so a throw or rejection there would otherwise become an
+ * unhandled error in the main process and leave the request hanging.
+ */
+function failRequest (req: express.Request, res: express.Response, err: unknown) {
+    console.error(`Route handler failed for ${req.method} ${req.originalUrl}:`, err);
+    if (res.headersSent) return res.end();
+    return res.status(500).send({
+        message: "APIServer: Internal error while handling this request",
+        code: 0,
+    });
+}
+
 export default class Util {
     static ProfilePatch (
         userData: APIUser,
@@ -115,17 +131,37 @@ export default class Util {
         callback: (rq: express.Request<any, any, any, any>, rs: express.Response) => unknown,
     ) {
         let data = "";
+        const runCallback = () => {
+            try {
+                const result = callback(req, res);
+                if (result && typeof (result as Promise<unknown>).then === "function") {
+                    (result as Promise<unknown>).catch(err => failRequest(req, res, err));
+                }
+            } catch (err) {
+                failRequest(req, res, err);
+            }
+        };
         // Media type only: `application/json; charset=utf-8` is still JSON.
         if (!isJsonContentType(req.headers["content-type"])) {
             return multer().any()(req, res, function (err) {
                 if (err) {
                     console.error("Multer Error:", err);
                 }
-                callback(req, res);
+                runCallback();
             });
         }
         req.on("data", function (chunk) {
             data += chunk;
+        });
+        req.on("error", err => {
+            // Without this the stream error is unhandled and the response never completes.
+            console.error("Request stream error:", err);
+            if (!res.headersSent) {
+                res.status(400).send({
+                    message: "APIServer: Could not read the request body",
+                    code: 0,
+                });
+            }
         });
         req.on("end", function () {
             req.rawBody = data;
@@ -137,7 +173,7 @@ export default class Util {
                     console.error("JSON Parse Error:", e);
                 }
             }
-            callback(req, res);
+            runCallback();
         });
     }
     /**
