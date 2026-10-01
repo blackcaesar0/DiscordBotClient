@@ -1,13 +1,15 @@
 /* Copyright Elysia © 2025. All rights reserved */
 
+import { app as electronApp } from "electron";
 import { scope } from "electron-log";
 import express from "express";
 import { readFileSync } from "fs";
 import https from "https";
-import morgan from "morgan";
 import { type AddressInfo } from "net";
 import path from "path";
 import { registerRoutesSync } from "src/AppUtils/RegisterRoutes";
+import { isBlacklistedRoute } from "src/AppUtils/RequestGuards";
+import { createRequestLogger } from "src/AppUtils/RequestLogger";
 import Util from "src/AppUtils/Utils";
 
 import Constants from "./Constants";
@@ -16,13 +18,7 @@ const logger = scope("APIServer");
 
 const app = express();
 
-if (Constants.VerboseAPIServerLogging) { app.use(
-    morgan("dev", {
-        stream: {
-            write: msg => logger.info(msg.replace(/\n/g, "")),
-        },
-    }),
-); }
+app.use(createRequestLogger(logger));
 
 const HttpsOptions = Util.generateSelfSignedCertificate();
 
@@ -54,6 +50,21 @@ app.all("*", function (req, res, next) {
     next();
 });
 
+let cachedDiscordHTML: string | null = null;
+
+/**
+ * Read the bundled Discord HTML snapshot.
+ *
+ * Cached in packaged builds: this runs on every navigation and `readFileSync` blocks the Electron
+ * main thread. In development the file is re-read each time so a regenerated snapshot
+ * (`npm run core:update`) is picked up without restarting the app.
+ */
+function readDiscordHTML (): string {
+    if (!electronApp.isPackaged) return readFileSync(Constants.DiscordHTMLPath, "utf8");
+    cachedDiscordHTML ??= readFileSync(Constants.DiscordHTMLPath, "utf8");
+    return cachedDiscordHTML;
+}
+
 registerRoutesSync(app, path.resolve(__dirname, "routes"), ["/api/v10", "/api/v9", "/api"]);
 
 app.all("/developers/*", (req, res) => {
@@ -63,22 +74,43 @@ app.all("/developers/*", (req, res) => {
 // Other
 app.use((req, res, next) => {
     if (req.originalUrl.endsWith(".map")) return res.status(404).send();
-    if (Constants.BlacklistRoutes.some(_ => req.originalUrl.includes(_))) {
+    if (isBlacklistedRoute(req.originalUrl, Constants.BlacklistRoutes)) {
         return res.status(403).send({
             message: "APIServer: Bots cannot use this endpoint",
             code: 20001,
         });
     }
     // API routes
-    if (req.originalUrl.includes("/api/")) return Util.proxy(req, res);
+    // `Util.proxy` is async: without forwarding the rejection, a failure here would surface as an
+    // unhandled rejection in the main process instead of an error response.
+    if (req.originalUrl.includes("/api/")) return Util.proxy(req, res).catch(next);
     // Main page
     if (["/", "/app", "/login"].includes(req.path) || ["/channels/"].some(s => req.path.startsWith(s))) {
         logger.log("Serving Discord HTML for route:", req.path);
-        return res.send(readFileSync(Constants.DiscordHTMLPath, "utf8"));
+        try {
+            return res.send(readDiscordHTML());
+        } catch (err) {
+            logger.error(`Cannot read the Discord snapshot at ${Constants.DiscordHTMLPath}:`, err);
+            return res.status(500).send({
+                message: `APIServer: Discord snapshot missing at ${Constants.DiscordHTMLPath}. Run "npm run core:update" to generate it.`,
+                code: 0,
+            });
+        }
     }
     // Other routes
     req.headers = req.originalHeaders;
-    return Util.proxy(req, res);
+    return Util.proxy(req, res).catch(next);
+});
+
+// Error handler. The Discord web client can only parse JSON error bodies, while Express' default
+// handler answers with an HTML stack-trace page (which also leaks local paths into the renderer).
+app.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    logger.error(`Unhandled error while serving ${req.method} ${req.path}:`, err);
+    if (res.headersSent) return res.end();
+    return res.status(500).send({
+        message: "APIServer: Internal error while proxying this request",
+        code: 0,
+    });
 });
 
 export default async function startAppServer (): Promise<number> {

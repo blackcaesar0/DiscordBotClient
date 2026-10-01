@@ -9,7 +9,26 @@ import GlobalConfig from "src/AppCore/Config";
 import Constants from "src/AppCore/Constants";
 
 import { UserFlagsBitField } from "./DiscordBitField";
+import { buildUpstreamUrl, isJsonContentType } from "./RequestGuards";
+import { getIDFromToken } from "./TokenUtils";
 import { BadgesBasedUserDataAndExtends as UserBadges } from "./UserBadges";
+import { isNewerVersion } from "./Version";
+
+/**
+ * Log a failed route callback and answer with a Discord-shaped error body.
+ *
+ * Callbacks passed to {@link Util.getDataFromRequest} run from a stream/multer callback, i.e.
+ * outside the call stack Express can catch, so a throw or rejection there would otherwise become an
+ * unhandled error in the main process and leave the request hanging.
+ */
+function failRequest (req: express.Request, res: express.Response, err: unknown) {
+    console.error(`Route handler failed for ${req.method} ${req.originalUrl}:`, err);
+    if (res.headersSent) return res.end();
+    return res.status(500).send({
+        message: "APIServer: Internal error while handling this request",
+        code: 0,
+    });
+}
 
 export default class Util {
     static ProfilePatch (
@@ -97,19 +116,12 @@ export default class Util {
             },
         };
     }
-    static getIDFromToken (token = ""): string | null {
-        if (!token) return null;
-        token = token.replace(/^(Bot|Bearer)\s*/i, "");
-        const parts = token.split(".");
-        if (parts.length < 2) return null; // Token must have at least 2 parts (id.secret)
-        try {
-            const decoded = Buffer.from(parts[0], "base64").toString();
-            // Discord user/bot IDs are numeric (snowflakes)
-            if (!decoded || !/^\d+$/.test(decoded)) return null;
-            return decoded;
-        } catch {
-            return null;
-        }
+    /**
+     * Decode the account ID a Discord token belongs to.
+     * @see {@link getIDFromToken} in `TokenUtils.ts` for the (unit tested) implementation.
+     */
+    static getIDFromToken (token: unknown = ""): string | null {
+        return getIDFromToken(token);
     }
 
     static getDataFromRequest (
@@ -119,17 +131,37 @@ export default class Util {
         callback: (rq: express.Request<any, any, any, any>, rs: express.Response) => unknown,
     ) {
         let data = "";
-        // check content-type
-        if (req.headers["content-type"] !== "application/json") {
+        const runCallback = () => {
+            try {
+                const result = callback(req, res);
+                if (result && typeof (result as Promise<unknown>).then === "function") {
+                    (result as Promise<unknown>).catch(err => failRequest(req, res, err));
+                }
+            } catch (err) {
+                failRequest(req, res, err);
+            }
+        };
+        // Media type only: `application/json; charset=utf-8` is still JSON.
+        if (!isJsonContentType(req.headers["content-type"])) {
             return multer().any()(req, res, function (err) {
                 if (err) {
                     console.error("Multer Error:", err);
                 }
-                callback(req, res);
+                runCallback();
             });
         }
         req.on("data", function (chunk) {
             data += chunk;
+        });
+        req.on("error", err => {
+            // Without this the stream error is unhandled and the response never completes.
+            console.error("Request stream error:", err);
+            if (!res.headersSent) {
+                res.status(400).send({
+                    message: "APIServer: Could not read the request body",
+                    code: 0,
+                });
+            }
         });
         req.on("end", function () {
             req.rawBody = data;
@@ -141,7 +173,7 @@ export default class Util {
                     console.error("JSON Parse Error:", e);
                 }
             }
-            callback(req, res);
+            runCallback();
         });
     }
     /**
@@ -168,41 +200,38 @@ export default class Util {
     }
     /**
      * Compares two version strings and determines if `versionB` is newer than `versionA`.
-     * Supports version strings in the format `major.minor.patch` with an optional prefix 'v'.
+     * Tolerates a `v` prefix, prerelease suffixes (nightly builds) and build metadata, and returns
+     * `false` instead of throwing on an unparseable version.
      *
      * @param versionA - The current version (e.g., "v1.2.3" or "1.2.3").
      * @param versionB - The new version to check (e.g., "v1.3.0" or "1.3.0").
      * @returns `true` if `versionB` is newer than `versionA`, otherwise `false`.
+     * @see {@link isNewerVersion} in `Version.ts` for the (unit tested) implementation.
      */
-    static isNewerVersion (versionA: string, versionB: string) {
-        const normalizeVersion = (version: string) => version.replace(/^v/, "");
-
-        const parseVersion = (version: string) => {
-            const parts = version.split(".").map(Number);
-            if (parts.length !== 3 || parts.some(isNaN)) {
-                throw new Error(`Invalid version format: ${version}`);
-            }
-            return parts;
-        };
-
-        const [vA, vB] = [normalizeVersion(versionA), normalizeVersion(versionB)].map(parseVersion);
-
-        for (let i = 0; i < 3; i++) {
-            if (vB[i] > vA[i]) return true;
-            if (vB[i] < vA[i]) return false;
-        }
-
-        return false;
+    static isNewerVersion (versionA: unknown, versionB: unknown) {
+        return isNewerVersion(versionA, versionB);
     }
     static async proxy (req: express.Request, res: express.Response) {
         if (!net.isOnline()) {
             return res.status(503).send({ message: "chrome://dino" });
         }
 
+        // Resolve the upstream URL instead of concatenating the raw request target onto the origin:
+        // a target such as `/\evil.com/x` would otherwise resolve to another origin and leak the
+        // rewritten `Authorization: Bot <token>` header to it (see buildUpstreamUrl).
+        const upstreamUrl = buildUpstreamUrl(req.originalUrl);
+        if (!upstreamUrl) {
+            console.error("Proxy rejected an out-of-origin request target:", req.originalUrl);
+            return res.status(400).send({
+                message: "APIServer: Invalid request target",
+                code: 0,
+            });
+        }
+
         // 1. Create Electron request
         const electronReq = net.request({
             method: req.method as string,
-            url: `https://canary.discord.com${req.originalUrl}`,
+            url: upstreamUrl.toString(),
             redirect: "follow",
             useSessionCookies: true,
         });

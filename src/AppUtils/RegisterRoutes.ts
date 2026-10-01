@@ -37,9 +37,12 @@ export function traverseDirectorySync(options: TraverseDirectoryOptions): string
     })) {
         const path = options.dirname + file;
         const stat = fs.lstatSync(path);
-        if (path.match(options.excludeDirs)) continue;
+        // Match the entry name, not the absolute path: both default patterns are anchored with `^`,
+        // so matching the full path made them inert (nothing starts with "." there) and hidden
+        // files/directories were traversed and registered.
+        if (file.match(options.excludeDirs)) continue;
 
-        if (path.match(options.filter) && stat.isFile()) {
+        if (file.match(options.filter) && stat.isFile()) {
             result.push(path);
         } else if (options.recursive && stat.isDirectory()) {
             result.push(...traverseDirectorySync({ ...options, dirname: path + "/" }));

@@ -4,7 +4,7 @@ import { AddressInfo } from "node:net";
 
 import { scope } from "electron-log";
 import express from "express";
-import morgan from "morgan";
+import { createRequestLogger } from "src/AppUtils/RequestLogger";
 
 import Constants from "./Constants";
 
@@ -12,15 +12,7 @@ const logger = scope("EditorServer");
 
 const app = express();
 
-if (Constants.VerboseAPIServerLogging) {
-    app.use(
-        morgan("dev", {
-            stream: {
-                write: msg => logger.info(msg.replace(/\n/g, "")),
-            },
-        }),
-    );
-}
+app.use(createRequestLogger(logger));
 
 app.use(express.static(Constants.EditorHTMLFolderPath));
 

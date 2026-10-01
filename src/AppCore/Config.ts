@@ -12,6 +12,7 @@ import path from "path";
  * @property {number} guilds_per_shard - Number of guilds per shard.
  * @property {boolean} suppress_intent_warning - Suppress intent warning.
  * @property {boolean} generate_fake_profile - Generate a fake profile for the user.
+ * @property {boolean} verbose_logging - Log every request handled by the local servers.
  */
 
 export type Config = {
@@ -19,7 +20,14 @@ export type Config = {
     guilds_per_shard: number;
     suppress_intent_warning: boolean;
     generate_fake_profile: boolean;
+    verbose_logging: boolean;
 };
+
+/**
+ * Discord's documented ceiling for a single shard. A larger value would make the app compute fewer
+ * shards than the gateway requires.
+ */
+const MaxGuildsPerShard = 2500;
 
 export class GlobalConfig {
     /**
@@ -34,7 +42,15 @@ export class GlobalConfig {
             fs.writeFileSync(this.iniPath, this.toString(), "utf-8");
         } else {
             console.log("Loading configuration from", this.iniPath);
-            this.loadConfig(fs.readFileSync(this.iniPath, "utf-8"));
+            try {
+                this.loadConfig(fs.readFileSync(this.iniPath, "utf-8"));
+            } catch (e) {
+                // A hand-edited config must not stop the app from starting (this used to throw out
+                // of the constructor). Fall back to defaults and leave the file on disk untouched so
+                // it can still be fixed from the config editor.
+                console.error(`Invalid configuration in ${this.iniPath}, falling back to defaults:`, e);
+                this.config = this.defaultConfig();
+            }
         }
     }
     loadConfig (iniString: string) {
@@ -60,6 +76,7 @@ export class GlobalConfig {
             guilds_per_shard: 100,
             suppress_intent_warning: false,
             generate_fake_profile: true,
+            verbose_logging: false,
         };
     }
     /**
@@ -79,14 +96,24 @@ export class GlobalConfig {
         if (typeof this.config.cache_assets !== "boolean") {
             throw new Error("Invalid value for cache_assets, expected boolean.");
         }
-        if (typeof this.config.guilds_per_shard !== "number" || this.config.guilds_per_shard <= 0) {
-            throw new Error("Invalid value for guilds_per_shard, expected positive number.");
+        if (
+            typeof this.config.guilds_per_shard !== "number" ||
+            !Number.isInteger(this.config.guilds_per_shard) ||
+            this.config.guilds_per_shard < 1 ||
+            this.config.guilds_per_shard > MaxGuildsPerShard
+        ) {
+            throw new Error(
+                `Invalid value for guilds_per_shard, expected an integer between 1 and ${MaxGuildsPerShard}.`,
+            );
         }
         if (typeof this.config.suppress_intent_warning !== "boolean") {
             throw new Error("Invalid value for suppress_intent_warning, expected boolean.");
         }
         if (typeof this.config.generate_fake_profile !== "boolean") {
             throw new Error("Invalid value for generate_fake_profile, expected boolean.");
+        }
+        if (typeof this.config.verbose_logging !== "boolean") {
+            throw new Error("Invalid value for verbose_logging, expected boolean.");
         }
     }
     // eslint-disable-next-line
@@ -135,7 +162,7 @@ This feature is **not recommended** for most users. Old asset files are not auto
 
 This value helps the application calculate the required number of shards. Due to Discord's internal sharding algorithm, the actual number of guilds assigned to each shard may vary and will not always be perfectly distributed.
 
-Setting this to a very large number may cause unexpected or unstable behavior.
+Must be a whole number between \`1\` and \`${MaxGuildsPerShard}\` (Discord's ceiling for a single shard); a larger value would compute fewer shards than the gateway accepts.
 
 **Type:** \`number\`  
 **Default:** \`100\``,
@@ -174,6 +201,24 @@ Disabling this option still patches some necessary API fields (to prevent crashe
                     },
                     false: {
                         documentation: "Disable fake profile data injection, using only real data from Discord.",
+                    },
+                },
+            },
+            verbose_logging: {
+                documentation: `Determines whether every request handled by the local servers is written to the application log.
+
+Useful when reporting a bug, but the log file then contains the full URL of each request (guild/channel IDs, search queries). Credentials that appear in a URL (webhook and interaction tokens, OAuth codes) are masked before logging.
+
+Takes effect immediately, without restarting the application.
+
+**Type:** \`boolean\`
+**Default:** \`false\``,
+                enum: {
+                    true: {
+                        documentation: "Log every request handled by the local servers.",
+                    },
+                    false: {
+                        documentation: "Do not log requests (default).",
                     },
                 },
             },
