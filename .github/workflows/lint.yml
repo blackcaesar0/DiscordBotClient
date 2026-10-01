@@ -31,3 +31,5 @@ jobs:
       - run: npm run lint
 
       - run: npm run test:typescript
+
+      - run: npm run test:unit

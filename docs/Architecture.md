@@ -49,6 +49,8 @@ through a **local proxy** that:
 | File | Responsibility |
 |------|----------------|
 | `Utils.ts` | The proxy implementation (`Util.proxy`), self-signed cert generation, token→ID decoding, profile patching, request body parsing. |
+| `RequestGuards.ts` | Pure (Electron-free, unit-tested) request helpers: path normalization, route blacklisting, upstream URL validation, log redaction. |
+| `RequestLogger.ts` | The `morgan` middleware shared by both local servers (opt-in via `verbose_logging`, with URL redaction). |
 | `RegisterRoutes.ts` | Walks the `routes/` tree and registers each file as an Express handler. |
 | `Experiments.ts` | Builds the user/guild/apex experiment payloads from bundled snapshots. |
 | `DiscordBitField/` | Typed bitfield helpers (intents, user flags, application flags). |
@@ -72,12 +74,18 @@ through a **local proxy** that:
    sets the bot User-Agent.
 3. Routing:
    - `routes/**` provides local overrides/fakes for specific endpoints.
-   - Blacklisted endpoints (`Constants.BlacklistRoutes`) return `403`.
+   - Blacklisted endpoints (`Constants.BlacklistRoutes`) return `403`. The match
+     runs on the **normalized** path (`RequestGuards.isBlacklistedRoute`), so an
+     encoded (`%40me`), traversed (`..`) or differently-cased target cannot slip
+     past a check that the upstream API would still route to the blocked endpoint.
    - `/`, `/app`, `/login`, `/channels/*` serve the bundled Discord HTML.
    - Everything else is forwarded to `canary.discord.com` by `Util.proxy`.
-4. `Util.proxy` uses Electron's `net.request` (session-aware), copies safe
-   headers, forces the correct `Origin`/`Referer`, and streams the response
-   back to the web client.
+4. `Util.proxy` resolves the target with `RequestGuards.buildUpstreamUrl` (a
+   target that would resolve to any other origin is rejected with `400`), then
+   uses Electron's `net.request` (session-aware), copies safe headers, forces the
+   correct `Origin`/`Referer`, and streams the response back to the web client.
+5. Anything thrown while handling a request lands in the Express error handler,
+   which answers with a Discord-shaped JSON body instead of an HTML stack trace.
 
 ## Local development
 
@@ -94,7 +102,8 @@ Handy scripts:
 
 - `npm run lint` / `npm run lint:fix` — ESLint
 - `npm run format` — Prettier
-- `npm run test:typescript` — type-check only
+- `npm run test:typescript` — type-check only (sources + tests)
+- `npm run test:unit` — unit tests for the pure helpers in `test/` (`node --test` via `tsx`)
 - `npm run core:update` — regenerate the Discord web snapshot
 - `npm run build` — full production build (`electron-builder`)
 
@@ -112,3 +121,14 @@ documented inline (with Monaco autocomplete) in `Config.ts`:
 | `guilds_per_shard` | number | `100` | Used to compute the number of shards. |
 | `suppress_intent_warning` | boolean | `false` | Skip the MESSAGE_CONTENT intent warning at login. |
 | `generate_fake_profile` | boolean | `true` | Inject cosmetic fake profile/Nitro data. |
+| `verbose_logging` | boolean | `false` | Log every request handled by the local servers (URLs are redacted; takes effect without a restart). |
+
+## Tests
+
+`test/` holds `node:test` suites executed with `npm run test:unit` (and run in CI
+by `.github/workflows/lint.yml`). They cover `src/AppUtils/RequestGuards.ts`:
+path normalization, deny-list matching (including encoding/traversal bypasses),
+upstream-origin validation and log redaction.
+
+Keep security-relevant decisions in Electron-free modules like that one — it is
+what makes them testable without booting Electron.

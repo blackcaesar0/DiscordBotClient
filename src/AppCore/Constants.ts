@@ -51,7 +51,6 @@ export default class Constants extends null {
     static ChannelIdDefault = "1000000000000000000";
     static UserIdDefault = "1056491867375673424";
     static CustomDiscordDomain = "discord.com";
-    static VerboseAPIServerLogging = true;
     // Database
     static DirectMessages = {
         name: "DMsData",

@@ -1,0 +1,19 @@
+{
+  // Type-checks the unit tests together with the sources they import.
+  // Tests are never emitted into `build/`, so they stay out of the packaged app.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/**/*",
+    "test/**/*"
+  ],
+  "exclude": [
+    "node_modules/**/*",
+    "VencordExtension/**/*",
+    "dist/**/*",
+    "scripts/**/*",
+    "Vencord"
+  ]
+}

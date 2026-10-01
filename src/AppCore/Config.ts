@@ -12,6 +12,7 @@ import path from "path";
  * @property {number} guilds_per_shard - Number of guilds per shard.
  * @property {boolean} suppress_intent_warning - Suppress intent warning.
  * @property {boolean} generate_fake_profile - Generate a fake profile for the user.
+ * @property {boolean} verbose_logging - Log every request handled by the local servers.
  */
 
 export type Config = {
@@ -19,6 +20,7 @@ export type Config = {
     guilds_per_shard: number;
     suppress_intent_warning: boolean;
     generate_fake_profile: boolean;
+    verbose_logging: boolean;
 };
 
 export class GlobalConfig {
@@ -60,6 +62,7 @@ export class GlobalConfig {
             guilds_per_shard: 100,
             suppress_intent_warning: false,
             generate_fake_profile: true,
+            verbose_logging: false,
         };
     }
     /**
@@ -87,6 +90,9 @@ export class GlobalConfig {
         }
         if (typeof this.config.generate_fake_profile !== "boolean") {
             throw new Error("Invalid value for generate_fake_profile, expected boolean.");
+        }
+        if (typeof this.config.verbose_logging !== "boolean") {
+            throw new Error("Invalid value for verbose_logging, expected boolean.");
         }
     }
     // eslint-disable-next-line
@@ -174,6 +180,24 @@ Disabling this option still patches some necessary API fields (to prevent crashe
                     },
                     false: {
                         documentation: "Disable fake profile data injection, using only real data from Discord.",
+                    },
+                },
+            },
+            verbose_logging: {
+                documentation: `Determines whether every request handled by the local servers is written to the application log.
+
+Useful when reporting a bug, but the log file then contains the full URL of each request (guild/channel IDs, search queries). Credentials that appear in a URL (webhook and interaction tokens, OAuth codes) are masked before logging.
+
+Takes effect immediately, without restarting the application.
+
+**Type:** \`boolean\`
+**Default:** \`false\``,
+                enum: {
+                    true: {
+                        documentation: "Log every request handled by the local servers.",
+                    },
+                    false: {
+                        documentation: "Do not log requests (default).",
                     },
                 },
             },

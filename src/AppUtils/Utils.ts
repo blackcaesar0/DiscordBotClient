@@ -9,6 +9,7 @@ import GlobalConfig from "src/AppCore/Config";
 import Constants from "src/AppCore/Constants";
 
 import { UserFlagsBitField } from "./DiscordBitField";
+import { buildUpstreamUrl } from "./RequestGuards";
 import { BadgesBasedUserDataAndExtends as UserBadges } from "./UserBadges";
 
 export default class Util {
@@ -199,10 +200,22 @@ export default class Util {
             return res.status(503).send({ message: "chrome://dino" });
         }
 
+        // Resolve the upstream URL instead of concatenating the raw request target onto the origin:
+        // a target such as `/\evil.com/x` would otherwise resolve to another origin and leak the
+        // rewritten `Authorization: Bot <token>` header to it (see buildUpstreamUrl).
+        const upstreamUrl = buildUpstreamUrl(req.originalUrl);
+        if (!upstreamUrl) {
+            console.error("Proxy rejected an out-of-origin request target:", req.originalUrl);
+            return res.status(400).send({
+                message: "APIServer: Invalid request target",
+                code: 0,
+            });
+        }
+
         // 1. Create Electron request
         const electronReq = net.request({
             method: req.method as string,
-            url: `https://canary.discord.com${req.originalUrl}`,
+            url: upstreamUrl.toString(),
             redirect: "follow",
             useSessionCookies: true,
         });

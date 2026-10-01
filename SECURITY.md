@@ -49,7 +49,7 @@ makes it talk to a **local proxy** instead of Discord directly:
 |----------|-------|
 | Browser storage in the `persist:elysia_dbc` Electron session | Same model as logging into Discord web. Lives under the app's `userData` directory. |
 | The `Authorization` header of each request to the **local** proxy | Forwarded to Discord; never persisted by the proxy. |
-| **Not** in application logs | Request logging (morgan) records method/URL/status only, not headers. |
+| **Not** in application logs | Request logging is **off by default** (`verbose_logging`), records method/URL/status only (never headers), and masks credentials that appear in a URL. |
 
 You can wipe all of this from the tray menu → **"Delete all application data and
 relaunch"**.
@@ -62,7 +62,11 @@ relaunch"**.
 |------|-----------|
 | TLS validation disabled app-wide | The app **no longer** uses the global `ignore-certificate-errors` switch. TLS bypass is scoped with `session.setCertificateVerifyProc()` so **only** the locally-mapped `discord.com` self-signed proxy is trusted; every other host (CDN, GitHub updates, themes) keeps normal certificate validation. |
 | Proxy reachable from the LAN | Both local servers now bind to `127.0.0.1` only (previously `0.0.0.0`), so they are not reachable from other devices on the network. |
-| Token in logs | Header values are never logged. |
+| Token in logs | Header values are never logged. Request logging is additionally **disabled by default** and, when enabled, URLs are redacted (see below). |
+| Deny-list bypass on dangerous endpoints | `Constants.BlacklistRoutes` (MFA, account deletion, billing, telemetry…) used to be matched against the raw URL, so `/users/%40me/mfa/…`, a `..` segment or different casing slipped through while the upstream API still routed the request to the blocked endpoint. Matching now happens on a normalized path (percent-decoded, dot-segments resolved, separators collapsed, lower-cased) in `src/AppUtils/RequestGuards.ts`, and is covered by unit tests. |
+| Proxy forwarding the bot token off-origin | The upstream URL was built by string concatenation, and the WHATWG URL parser treats `\` like `/` — a request target such as `/\evil.com/x` could resolve to another origin and receive the rewritten `Authorization: Bot <token>` header. The target is now resolved **and** verified to stay on `https://canary.discord.com`; anything else is rejected locally with `400`. |
+| Secrets written to the log file | Some Discord API URLs carry credentials in the path (`/webhooks/:id/:token`, `/interactions/:id/:token/callback`) or query string (OAuth `code`, captcha keys). Request logging is now opt-in (`verbose_logging = false` by default) and masks those values before anything reaches `electron-log`. |
+| HTML error pages leaking local paths | Unhandled errors in the proxy are answered with a Discord-shaped JSON body instead of Express' default stack-trace page. |
 
 ---
 
